@@ -1,0 +1,80 @@
+    program one_explicit
+    implicit none
+    
+    !Definition of all Program Variables
+    real::L,time,time_final,dt,dx,kappa,rho,cp,alpha,landa,T0,Tinf,xpp,xpm,Fo,zeta1,C1
+    integer::i,j,k,m,n,q,nw,nww
+    real,dimension(:),allocatable::xp
+    real,dimension(:,:),allocatable::T
+
+
+    L=1.0  !half of plate thickness or radius of cylinder/sphere  (m)
+    n=80   !number of mesh in 1D geometry
+    time_final=5  !last time of transient solution (sec)
+    dt=0.00005   !time step (sec)
+    kappa=1   !thermal conductivity of solid (w/mk)
+    rho=1    !density of solid (kg/m3)
+    cp=1   !specific heat of solid (j/Kg.K)
+    T0=800    !initial temperature of solid (K)
+    Tinf=80   !ambient temperature (K)
+    m=2     !shape factor  -  wall--> m=0  - cylinder--> m=1  -  sphere--> m=2
+    nw=20   !number of data write skip
+
+    q=abs(time_final/dt)
+    allocate(xp(1:n+1),T(1:n+1,0:q))
+    nww=abs(q/nw)
+
+    dx=L/(n)
+    xp(1)=0
+    do i=2,n+1
+        xp(i)=xp(i-1)+dx
+    end do
+
+    alpha=kappa/(rho*cp)
+    landa=alpha*dt/(dx**2)
+
+    do i=1,n+1
+        T(i,0)=T0
+    end do
+
+    do j=0,q-1
+        T(n+1,j+1)=Tinf
+        do i=2,n
+            xpp=0.5*(xp(i+1)+xp(i))
+            xpm=0.5*(xp(i-1)+xp(i))
+            T(i,j+1)=T(i,j)+landa*(((xpp/xp(i))**m)*(T(i+1,j)-T(i,j))-((xpm/xp(i))**m)*(T(i,j)-T(i-1,j)))
+        end do
+        T(1,j+1)=T(2,j+1)
+        write(*,*),'Time=',(j+1)*dt,'sec','   Tmax=',T(1,j+1),'.K'
+    end do
+
+    open(UNIT = 1, FILE = "Temp.plt", Status = "replace", ACTION = "write", position = "ASIS")
+    open(UNIT = 2, FILE = "valid.plt", Status = "replace", ACTION = "write", position = "ASIS")
+
+
+    do j=0,q
+        if (mod(j,nww)==0) then
+            write(1,*),'ZONE'
+            do i=1,n+1
+                write(1,*),T(i,j),xp(i),j*dt
+            end do
+        end if
+    end do
+
+    if (m==0) then 
+        zeta1=1.5708
+        C1=1.2733
+    else if (m==1) then
+        zeta1=2.4050
+        C1=1.6018
+    else if (m==2) then
+        zeta1=3.1415
+        C1=2.0
+    end if
+
+    do j=0,q
+        Fo=alpha*j*dt/(L**2)
+        write(2,*),j*dt,T(1,j),(C1*exp(-(zeta1**2)*Fo))*(T0-Tinf)+Tinf,Fo
+    end do
+
+    end program
