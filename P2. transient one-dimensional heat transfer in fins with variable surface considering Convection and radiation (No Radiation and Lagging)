@@ -1,0 +1,177 @@
+program project_2
+implicit none
+
+! parameter definition...........................................................
+integer::i,imax,iteration
+double precision:: k,ru,cp,h,T_inf,T_base,T_initial,L,sigma,epsilon,time_error,radiation_error
+real :: time,c,time_rad
+double precision:: dt,dx,m
+double precision,dimension(1:51)::T,T_rad,T_new, A_e , A_w , A_0 , A , TT
+double precision,dimension(1:51)::aa,bb,cc,dd
+real,dimension(1:51)::x,y
+!.................................................................................
+k=60.0                  ! conductivity
+ru=7800.0
+cp=430.0
+h=15.0
+T_inf=300.0
+T_base=850.0
+L=0.07
+sigma=5.67e-8
+epsilon=1.0
+time_error=0.0001
+radiation_error=0.00001
+c=1.0                    ! y definition constant
+T_initial=850         ! initial temperature
+dt=0.005              ! geometry .................................................................................  
+imax=51
+dx=L/(imax-1.5)
+
+x(1)=0.0
+x(2)=0.5*dx
+DO i=3,51
+    x(i)=x(i-1)+dx
+END DO
+
+
+do i=1,51
+    y(i)=c*x(i)**2
+end do
+!print*,x
+!pause
+do i=1,51
+    A(i)=2*y(i)
+end do
+
+do i=1,50
+    A_e(i)=(A(i)+A(i+1))/2.0
+end do
+
+do i=2,51
+    A_w(i)=(A(i)+A(i-1))/2.0
+end do
+
+do i=2,50
+    A_0(i)=sqrt( (y(i+1)-y(i-1))**2 + (x(i+1)-x(i-1))**2  )
+end do
+!....................................................................................
+open(UNIT=  1, FILE ="temperature.plt" , STATUS="replace"  , ACTION = "write", position = "ASIS" )
+open(UNIT=  2, FILE = "valid.plt"      , Status = "replace", ACTION = "write", position = "ASIS")
+open(UNIT=  3, FILE = "steady.plt"      , Status = "replace", ACTION = "write", position = "ASIS")
+
+!....................................................................................
+! initial condition
+do i=2,50
+    T(i)=T_initial
+end do
+T(51)=T_base
+T(1)=850                    ! this temperature didnt affect the solution
+!....................................................................................
+T_new(1:51)=400                     ! this value is only for entering the loop
+time=0.0
+time_rad=0.0
+iteration=0
+do while( maxval( abs( T_new(2:50)-T(2:50) ) )> time_error)
+iteration=iteration+1
+ time=time+dt   
+do i=1,51
+    T(i)=T_new(i)
+end do
+
+! tecplot writing..........
+if(mod(iteration,10)==0) then
+write(1,*)'varibels="X" ,"T"'
+write(1,*) 'Zone T="Time:',time,',Timeset:',dt,'"'
+write(1,*) 'strandID=1, SolutionTime=',time
+write(1,*) 'i=',51  , 'ZONETYPE=Ordered'
+write(1,*) 'DATAPACKING=Point'
+
+    do i=1,51
+        write(1,*), x(i) , T_new(i)
+    end do
+end if
+!..........................
+
+T_rad(1:51)=T_initial                     ! this value is only for entering the loop
+
+do while( maxval( abs( T_rad(2:50)-T_new(2:50) ) )> radiation_error)
+T_new(:)=T_rad(:)
+time_rad=time_rad+dt
+do i=2,50
+ aa(i)=k*A_w(i)/dx
+ bb(i)=-( k*A_e(i)/dx  +   k*A_w(i)/dx  + h*A_0(i) + ru*cp*A(i)*dx/dt   )
+ cc(i)= k*A_e(i)/dx
+ dd(i)= -ru*cp*A(i)*dx/dt*T(i)   -   h*A_0(i)*T_inf  + epsilon*sigma*A_0(i)*(T_new(i)**4 - T_inf**4 )
+end do
+
+aa(1)=0    ;  bb(1)=1    ;   cc(1)=-1       ;    dd(1)=0.0
+aa(51)=0.0  ;  bb(51)=1   ;  cc(51)=0.0     ;  dd(51)=T_base
+
+call tdma(51,aa,bb,cc,dd,T_rad)
+
+end do
+
+!print*,T
+!print*,T_rad
+!print*,T_new
+!pause
+
+print*,time,maxval( abs( T_new(2:50)-T(2:50) )),time_rad
+!print*,T_new
+ !pause
+ 
+end do   ! time cycle
+
+
+write(3,*)'varibels="X" ,"T"'
+write(3,*) 'Zone T="Time:',time,',Timeset:',dt,'"'
+write(3,*) 'strandID=1, SolutionTime=',time
+write(3,*) 'i=',51  , 'ZONETYPE=Ordered'
+write(3,*) 'DATAPACKING=Point'
+
+    do i=1,51
+        write(3,*), x(i) , T_new(i)
+    end do
+write(2,*)'varibels="X" ,"T"'
+write(2,*) 'Zone T="Time:',100,',Timeset:',dt,'"'
+write(2,*) 'strandID=1, SolutionTime=',time
+write(2,*) 'i=',51  , 'ZONETYPE=Ordered'
+write(2,*) 'DATAPACKING=Point'
+  
+do i=1,51
+    TT(i) = T_inf + (T_base -  T_inf)* (x(i)/L)**(  (-1.0 + sqrt(1+4*h/(c*k)))/2.0  )
+    write(2,*) , x(i) , TT(i)
+end do
+
+
+
+
+    end program
+    
+    
+    
+    
+     subroutine tdma(n,a,b,c,d,x)
+	  implicit none
+      integer, intent(in) :: n
+      double precision, intent(in) :: a(n), c(n)
+      double precision, intent(inout), dimension(n) :: b, d
+	  double precision, intent(out) :: x(n)
+	  !  --- Local variables ---
+	  integer :: i
+	  double precision :: q
+      !  --- Elimination ---
+      do i = 2,n
+         q = a(i)/b(i - 1)
+         b(i) = b(i) - c(i - 1)*q
+         d(i) = d(i) - d(i - 1)*q
+      end do
+      ! --- Backsubstitution ---
+      q = d(n)/b(n)
+      x(n) = q
+      do i = n - 1,1,-1
+         q = (d(i) - c(i)*q)/b(i)
+         x(i) = q
+      end do
+      return
+      end
