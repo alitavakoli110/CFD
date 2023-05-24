@@ -1,0 +1,205 @@
+    program ADI_Firstmodel
+    implicit none
+
+    ! "parameter definition".........................................................................................
+    integer          :: i,imax,j,jmax
+    integer          :: x_intervals,y_intervals,frame
+    real             :: dx,dy,dt,dN,dS,dE,dW,An,As,Ae,Aw,vol
+    real             :: ru,cp,k,q_zegond,h1,T_inf
+    real             :: L,H
+    real             :: time
+    double precision :: time_error = 1e-3
+    double precision :: temprature_error = 1e-4
+
+    double precision, allocatable   :: T_history(:,:) , T_nplus(:,:) , T_nplus2(:,:)
+    real, dimension(:), allocatable :: a,b_prime,c,d,x
+    !...............................................................................................................
+
+    !  "physical properties"........................................................................................
+    k=1.0    ;  ru=1.0    ; cp=1.0
+    h1=5    ;T_inf=25.0    ;  q_zegond=2000.0
+    !..............................................................................................................
+
+    ! "Grid Generation".............................................................................................
+    L=1.0 ; H=2.0
+    x_intervals=50; y_intervals=100;
+
+    imax=x_intervals+1 ; jmax=y_intervals+1
+    dx=L/x_intervals
+    dy=H/y_intervals
+
+    dN=dy ; dS=dy ; dE=dx ; dW=dx
+    An=dx ; As=dx ; Ae=dy ; Aw=dy ; vol=dx*dy
+
+    allocate ( T_history(1:imax,1:jmax) , T_nplus(1:imax,1:jmax) , T_nplus2(1:imax,1:jmax)   )
+    !...............................................................................................................
+
+    ! "initial condition"...........................................................................................
+    ! initial condition for entering the "do while" loop for time marching
+    do i=1,imax
+        do j=1,jmax
+            T_history(i,j)=25.0
+            T_nplus(i,j)=0.0
+        end do
+    end do
+
+    !...............................................................................................................
+
+    open( UNIT=1,FILE="temprature_distribution.plt", STATUS="replace", ACTION="write" )
+
+    ! "starting time marching..." ..................................................................................
+    time=0.0
+    dt=0.01
+    frame=0
+    open(3,file='point1.txt')
+    do while( maxval( abs (T_nplus(1:imax,1:jmax) - T_history(1:imax,1:jmax) ) )> time_error )
+
+        print*,time,"temprature residual is",maxval( abs (T_nplus(1:imax,1:jmax) - T_history(1:imax,1:jmax) ) )
+        time = time+dt
+        write(3,*) time,T_history(1,jmax/2)
+        frame=frame+1
+        T_history(:,:)=T_nplus(:,:)
+        ! tecplot history...............................................................................................
+        write(1,*)'varibels="X","Y","T"'
+        write(1,*) 'Zone T="Time:',time,',Timeset:',dt,'"'
+        write(1,*) 'strandID=1, SolutionTime=',time
+        write(1,*) 'i=',imax, ', j=',jmax,', ZONETYPE=Ordered'
+        write(1,*) 'DATAPACKING=Point'
+
+        do j=1,jmax
+            do i=1,imax
+                write(1,*), dx*(i-1) , dy*(j-1) , T_history(i,j)
+            end do
+        end do
+        !..............................................................................................................
+        do i=1,imax
+            do j=1,jmax
+                T_nplus2(i,j)=25.0                   ! initial condition for entering the "do while" loop for TDMA
+            end do
+        end do
+
+        do while( maxval( abs (T_nplus2(1:imax,1:jmax) - T_nplus(1:imax,1:jmax) ) )> temprature_error )
+
+            T_nplus(:,:)=T_nplus2(:,:)
+            !"STEP1 :     i SWEEP  "------------------------------------------------------------------------------------------
+            allocate(   a(1:jmax),b_prime(1:jmax),c(1:jmax),d(1:jmax),x(1:jmax)   )
+
+            do i=2,imax-1
+
+                do j=2,jmax-1
+                    a(j)=         (-1)*k*As/ds
+                    b_prime(j)=   ru*cp*vol/dt  + k*An/dN  +  k*As/dS  +  k*Ae/dE  +  k*Aw/dW
+                    c(j)=         (-1)*k*An/dN
+                    d(j)=         k*Ae/dE*T_nplus(i+1,j)  +  k*Aw/dW*T_nplus(i-1,j)   +   ru*cp*vol/dt*T_history(i,j)
+                end do
+                ! boundary conditions...
+                ! valid   a(1)=0.0     ;  b_prime(1)=1.0     ;  c(1)=0.0   ;  d(1)=T_down
+                a(1)=0.0     ;  b_prime(1)=1.0     ;  c(1)=-1.0   ;  d(1)=0.0
+                ! valid   a(jmax)=0.0  ;  b_prime(jmax)=1.0  ; c(jmax)=0.0 ; d(jmax) = T_up
+                a(jmax)=-k/dy  ;  b_prime(jmax)=k/dy  ; c(jmax)=0.0 ; d(jmax) =q_zegond
+                call solve_tridiag(a,b_prime,c,d,x,jmax)
+
+
+                do j=1,jmax
+                    T_nplus2(i,j)=x(j)
+                end do
+
+
+
+            end do
+            !do i=1,imax
+            !   do j=1,jmax
+            !print*, i , j , T_nplus2(i,j)
+            !  end do
+            !  end do
+            !pause
+            !"STEP2  :  j SWEEP  "---------------------------------------------------------------------------------------------
+            deallocate(a,b_prime,c,d,x)
+            allocate(  a(1:imax) , b_prime(1:imax)  , c(1:imax) ,  d(1:imax)  ,  x(1:imax)   )
+
+            do j=2,jmax-1
+
+                do i=2,imax-1
+                    a(i)=         (-1)*k*Aw/dW
+                    b_prime(i)=   ru*cp*vol/dt  + k*An/dN  +  k*As/dS  +  k*Ae/dE  +  k*Aw/dW
+                    c(i)=         (-1)*k*Ae/dE
+                    d(i)=         k*An/dN*T_nplus2(i,j+1)  +  k*As/dS*T_nplus2(i,j-1)   +   ru*cp*vol/dt*T_history(i,j)
+                end do
+                ! boundary conditions...
+                
+                a(1)=0.0     ;  b_prime(1)=-h1-k/dx     ;  c(1)=k/dx   ;  d(1)=-h1*T_inf
+
+                a(imax)=-k/dx  ;  b_prime(imax)=h1+k/dx  ; c(imax)=0.0 ; d(imax) =h1*T_inf
+
+                call solve_tridiag(a,b_prime,c,d,x,imax)
+
+                do i=1,imax
+                    T_nplus2(i,j)=x(i)
+                end do
+
+            end do
+            deallocate(a,b_prime,c,d,x)
+            !------------------------------------------------------------------------------------------------------------------
+        end do    ! End do while for TDMA
+
+
+
+
+
+        !--------------------------------------------------------------------------
+    end do    ! End do while for time marching
+
+
+    !temperatue contour of numerical methode
+    open(200,file='numerical contour unsteady.plt')
+    write(200,*)"variables=x(m),y(m),T(c)"
+    write(200,*)'zone t= "numerical"'
+    write(200,*)"i=",imax,"j=",jmax
+    write(200,*)"f=point"
+
+    do j= 1,jmax
+        do i= 1,imax
+            write(200,*) (i-1)*dx,(j-1)*dy,T_nplus2(i,j)
+        end do
+
+
+    end do
+
+    !/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    !/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    contains
+    !                                                  ******* subroutines******
+    ! TDMA ALGORITHM
+    subroutine solve_tridiag(a,b,c,d,x,n)
+    implicit none
+
+    integer,intent(in)::n
+    real,dimension(n),intent(in)::a,b,c,d
+    real,dimension(n),intent(out)::x
+    real,dimension(n)::cp,dp
+    real::m
+    integer i
+
+    ! initialize c-prime and d-prime
+    cp(1)=c(1)/b(1)
+    dp(1)=d(1)/b(1)
+
+    ! solve for vectors c-prime and d-prime
+    do i=2,n
+        m=b(i)-cp(i-1)*a(i)
+        cp(i)=c(i)/m
+        dp(i)=(d(i)-dp(i-1)*a(i))/m
+    end do
+
+    ! initialize x
+    x(n)=dp(n)
+
+    ! solve for x from the vectors c-prime and d-prime
+    do i=n-1,1,-1
+        x(i)=dp(i)-cp(i)*x(i+1)
+    end do
+
+    end subroutine solve_tridiag
+    !////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    !////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    end program ADI_Firstmodel
